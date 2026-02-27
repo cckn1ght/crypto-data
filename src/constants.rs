@@ -1,13 +1,15 @@
+use clap::ValueEnum;
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use once_cell::sync::Lazy;
-use clap::ValueEnum;
-use serde::{Serialize, Deserialize};
 
 pub const SPOT_API_BASE_URL: &str = "https://api.binance.com/api/v3/";
 pub const USD_FUTURES_API_BASE_URL: &str = "https://fapi.binance.com/fapi/v1/";
 pub const COIN_FUTURES_API_BASE_URL: &str = "https://dapi.binance.com/dapi/v1/";
-#[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug, Hash)]
+#[derive(
+    Serialize, Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug, Hash,
+)]
 pub enum MARKET {
     Spot,
     UsdFutures,
@@ -24,16 +26,11 @@ pub static MARKET_BASE_URL: Lazy<HashMap<MARKET, &'static str>> = Lazy::new(|| {
         (MARKET::Spot, SPOT_API_BASE_URL),
         (MARKET::UsdFutures, USD_FUTURES_API_BASE_URL),
         (MARKET::CoinFutures, COIN_FUTURES_API_BASE_URL),
-    ].iter().cloned().collect()
+    ]
+    .iter()
+    .cloned()
+    .collect()
 });
-// pub const CONTRACT_TYPES: [&str; 2] = ["PERPETUAL", "CURRENT_QUARTER"];
-// pub enum ContractType {
-//     Perpetual,
-//     CurrentQuarter,
-// }
-// pub const INTERVALS: [&str; 15] = [
-//     "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"
-// ];
 
 pub const HEADERS: [&str; 11] = [
     "Open_Time",
@@ -49,3 +46,8 @@ pub const HEADERS: [&str; 11] = [
     "Taker_Buy_Quote_Asset_Volume",
 ];
 pub const KLINE_LIMIT: usize = 1000;
+pub const MAX_RETRIES: usize = 6;
+pub const REQUEST_THROTTLE_MS: u64 = 150;
+pub const REQUEST_ERROR_RETRY_DELAY_MS: u64 = 1_500;
+pub const RATE_LIMIT_BASE_BACKOFF_MS: u64 = 3_000;
+pub const RATE_LIMIT_MAX_BACKOFF_MS: u64 = 30_000;

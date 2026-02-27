@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use anyhow::{Context, Result};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 
@@ -45,7 +46,7 @@ enum Commands {
         /// UTC End Time, supports both unix timestamp in milliseconds or date string in this format: "2022-01-01 00:00:00" . Default is now()
         #[arg(long)]
         end_time: Option<String>,
-        
+
         /// Director for saving the downloaded klines, default is current directory
         #[arg(long, short)]
         director: Option<String>,
@@ -54,53 +55,134 @@ enum Commands {
     },
 }
 
-fn main() {
+struct GetKlinesArgs<'a> {
+    market: &'a constants::MARKET,
+    all: bool,
+    interval: &'a str,
+    start_time: &'a Option<String>,
+    end_time: &'a Option<String>,
+    symbols: &'a [String],
+    director: &'a Option<String>,
+}
+
+fn main() -> Result<()> {
     let cli = Cli::parse();
-    // println!("{:?}", cli);
+    let client = utils::build_http_client()?;
+
     match &cli.command {
-        Commands::ListSymbols { market } => {
-            let api_base_url = constants::MARKET_BASE_URL.get(market).unwrap().to_string();
-            let symbols = utils::get_trading_symbols(api_base_url);
-            println!("{:?}", symbols);
-        }
-        Commands::GetKlines { market, all, interval, start_time, end_time, symbols, director } => {
-            if !all && symbols.len() == 0 {
-                println!("Please provide symbols to download klines from or use --all to download klines of all symbols.");
-                return;
-            }
-            let d = director.clone().unwrap_or(".".to_string());
-            let p = Path::new(&d);
-            if !p.exists() {
-                fs::create_dir_all(p).unwrap();
-                println!("Created directory: {}", fs::canonicalize(p).unwrap().to_str().unwrap())
-            }
-            let end_datetime = match end_time {
-                Some(end_time) => utils::parse_date_time(end_time).unwrap(),
-                None => Utc::now(),
+        Commands::ListSymbols { market } => handle_list_symbols(&client, market)?,
+        Commands::GetKlines {
+            market,
+            all,
+            interval,
+            start_time,
+            end_time,
+            symbols,
+            director,
+        } => {
+            let args = GetKlinesArgs {
+                market,
+                all: *all,
+                interval,
+                start_time,
+                end_time,
+                symbols,
+                director,
             };
-            let start_datetime = match start_time {
-                Some(start_time) => utils::parse_date_time(start_time).unwrap(),
-                None => end_datetime - Duration::days(30)
-            };
-            let api_base_url = constants::MARKET_BASE_URL.get(market).unwrap().to_string();
-            println!("Start time: {}, End time: {}, saving files to: {}", start_datetime, end_datetime, fs::canonicalize(p).unwrap().to_str().unwrap());
-            let fetch_props = types::FetchProps {
-                api_base_url: api_base_url.clone(),
-                market: *market,
-                contract_type: "".to_string(),
-                symbol: "".to_string(),
-                interval: (*interval.clone()).to_string(),
-                start_time: start_datetime.timestamp_millis(),
-                end_time: end_datetime.timestamp_millis(),
-                director: d
-            };
-            if *all {
-                let symbols = utils::get_trading_symbols(api_base_url);
-                utils::get_historical_candlesticks_for_symbols(fetch_props, symbols);
-            } else {
-                let uppercased_symbols = symbols.iter().map(|s| s.to_uppercase()).collect::<Vec<String>>();
-                utils::get_historical_candlesticks_for_symbols(fetch_props, uppercased_symbols);
-            }
+            handle_get_klines(&client, args)?
         }
     }
+
+    Ok(())
+}
+
+fn handle_list_symbols(
+    client: &reqwest::blocking::Client,
+    market: &constants::MARKET,
+) -> Result<()> {
+    let api_base_url = constants::MARKET_BASE_URL
+        .get(market)
+        .context("unsupported market")?;
+    let symbols = utils::get_trading_symbols(client, api_base_url)?;
+    println!("{:?}", symbols);
+    Ok(())
+}
+
+fn handle_get_klines(client: &reqwest::blocking::Client, args: GetKlinesArgs) -> Result<()> {
+    if !args.all && args.symbols.is_empty() {
+        println!("Please provide symbols to download klines from or use --all to download klines of all symbols.");
+        return Ok(());
+    }
+
+    let output_dir = prepare_output_directory(args.director)?;
+    let (start_datetime, end_datetime) = resolve_time_range(args.start_time, args.end_time)?;
+    let api_base_url = constants::MARKET_BASE_URL
+        .get(args.market)
+        .context("unsupported market")?
+        .to_string();
+    println!(
+        "Start time: {}, End time: {}, saving files to: {}",
+        start_datetime, end_datetime, output_dir
+    );
+
+    let fetch_props = types::FetchProps {
+        api_base_url: api_base_url.clone(),
+        market: *args.market,
+        contract_type: "".to_string(),
+        symbol: "".to_string(),
+        interval: args.interval.to_string(),
+        start_time: start_datetime.timestamp_millis(),
+        end_time: end_datetime.timestamp_millis(),
+        director: output_dir,
+    };
+
+    if args.all {
+        let all_symbols = utils::get_trading_symbols(client, &api_base_url)?;
+        return utils::get_historical_candlesticks_for_symbols(client, fetch_props, all_symbols);
+    }
+
+    let uppercased_symbols = args
+        .symbols
+        .iter()
+        .map(|s| s.to_uppercase())
+        .collect::<Vec<String>>();
+    utils::get_historical_candlesticks_for_symbols(client, fetch_props, uppercased_symbols)
+}
+
+fn prepare_output_directory(director: &Option<String>) -> Result<String> {
+    let output_dir = director.clone().unwrap_or_else(|| ".".to_string());
+    let path = Path::new(&output_dir);
+    if !path.exists() {
+        fs::create_dir_all(path).context("failed to create output directory")?;
+        println!(
+            "Created directory: {}",
+            fs::canonicalize(path)
+                .context("failed to canonicalize output directory")?
+                .to_str()
+                .context("invalid output directory unicode")?
+        );
+    }
+
+    let canonical = fs::canonicalize(path).context("failed to canonicalize output directory")?;
+    let text = canonical
+        .to_str()
+        .context("invalid output directory unicode")?
+        .to_string();
+    Ok(text)
+}
+
+fn resolve_time_range(
+    start_time: &Option<String>,
+    end_time: &Option<String>,
+) -> Result<(chrono::DateTime<Utc>, chrono::DateTime<Utc>)> {
+    let end_datetime = match end_time {
+        Some(value) => utils::parse_date_time(value)?,
+        None => Utc::now(),
+    };
+    let start_datetime = match start_time {
+        Some(value) => utils::parse_date_time(value)?,
+        None => end_datetime - Duration::days(30),
+    };
+
+    Ok((start_datetime, end_datetime))
 }

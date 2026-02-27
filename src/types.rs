@@ -1,6 +1,6 @@
+use crate::constants::MARKET;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::constants::MARKET;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FetchProps {
@@ -18,6 +18,54 @@ pub struct FetchProps {
 pub struct FetchPropsAction {
     pub type_: String,
     pub payload: String,
+}
+
+pub type RawCandle = (
+    i64,
+    String,
+    String,
+    String,
+    String,
+    String,
+    u64,
+    String,
+    u64,
+    String,
+    String,
+    String,
+);
+
+#[derive(Debug, Clone)]
+pub struct Candle {
+    pub open_time: i64,
+    pub open: String,
+    pub high: String,
+    pub low: String,
+    pub close: String,
+    pub volume: String,
+    pub close_time: u64,
+    pub quote_asset_volume: String,
+    pub number_of_trades: u64,
+    pub taker_buy_base_asset_volume: String,
+    pub taker_buy_quote_asset_volume: String,
+}
+
+impl Candle {
+    pub fn from_raw(raw: RawCandle) -> Self {
+        Self {
+            open_time: raw.0,
+            open: raw.1,
+            high: raw.2,
+            low: raw.3,
+            close: raw.4,
+            volume: raw.5,
+            close_time: raw.6,
+            quote_asset_volume: raw.7,
+            number_of_trades: raw.8,
+            taker_buy_base_asset_volume: raw.9,
+            taker_buy_quote_asset_volume: raw.10,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -93,5 +141,3 @@ pub struct Filter {
     pub multiplier_down: Option<String>,
     pub multiplier_decimal: Option<String>,
 }
-
-pub type Candle = (i64, String, String, String, String, String, u64, String, u64, String, String, String);
